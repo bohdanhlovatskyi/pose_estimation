@@ -56,7 +56,7 @@ class Up2P:
 
             t = b[:3, 0] * q + b[:3, 1]
             t *= -inv_norm
-            t = -R.T @ t
+            t = -R @ t
             res.append((R, t))
         
         return res
