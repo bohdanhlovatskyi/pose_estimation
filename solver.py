@@ -1,4 +1,5 @@
 import torch
+import numpy as np
 
 class Up2P:
     
@@ -76,13 +77,3 @@ class Up2P:
         roots.append(c / (a * roots[0]))
         
         return roots
-    
-    # [TODO] measure some more meaningful metrics
-    @staticmethod
-    def validate_sol(R, t, Rgt, tgt):
-        return get_rotation_error(Rgt, R), (t - tgt).norm()
-    
-    @staticmethod
-    def get_rotation_error(gt_R, R):
-        return torch.arccos((torch.trace(torch.matmul(gt_R.T, R)) - 1.0) / 2.0) * 180.0 / torch.pi
-        
