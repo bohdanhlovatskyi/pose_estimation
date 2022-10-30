@@ -80,4 +80,9 @@ class Up2P:
     # [TODO] measure some more meaningful metrics
     @staticmethod
     def validate_sol(R, t, Rgt, tgt):
-        return (R - Rgt).norm(), (t - tgt).norm()
+        return get_rotation_error(Rgt, R), (t - tgt).norm()
+    
+    @staticmethod
+    def get_rotation_error(gt_R, R):
+        return torch.arccos((torch.trace(torch.matmul(gt_R.T, R)) - 1.0) / 2.0) * 180.0 / torch.pi
+        
