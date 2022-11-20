@@ -4,6 +4,7 @@ import numpy as np
 # x
 def get_roll_mtx(roll: float, device: torch.device, dtype: torch.dtype):
     roll = torch.tensor(roll)
+    roll = torch.deg2rad(roll)
     return torch.tensor([[1., 0., 0.],
                            [0., torch.cos(roll), -torch.sin(roll)],
                            [0., torch.sin(roll), torch.cos(roll)]],
@@ -13,6 +14,7 @@ def get_roll_mtx(roll: float, device: torch.device, dtype: torch.dtype):
 # y
 def get_pitch_mtx(pitch: float, device: torch.device, dtype: torch.dtype):
     pitch = torch.tensor(pitch)
+    pitch = torch.deg2rad(pitch)
     return torch.tensor([[torch.cos(pitch), 0., torch.sin(pitch)],
                            [0., 1., 0.],
                            [-torch.sin(pitch), 0., torch.cos(pitch)]],
@@ -21,6 +23,7 @@ def get_pitch_mtx(pitch: float, device: torch.device, dtype: torch.dtype):
 # z
 def get_yaw_mtx(yaw: float, device: torch.device, dtype: torch.dtype):
     yaw = torch.tensor(yaw)
+    yaw = torch.deg2rad(yaw)
     return torch.tensor([[torch.cos(yaw), -torch.sin(yaw), 0.],
                            [torch.sin(yaw), torch.cos(yaw), 0.],
                            [0., 0., 1.]],
@@ -43,8 +46,9 @@ def get_upward_with_dev(rot: float, x_dev: float, z_dev: float,
     return get_rt_mtx(x_dev, rot, z_dev, device, dtype)
 
 def get_random_upward(x_dev: float = 0., z_dev: float = 0.):
-    random_angle = torch.randint(high=90, size=(1,)).float()
-    return get_upward_with_dev(float(random_angle), x_dev, z_dev), random_angle
+    # random_angle = torch.randint(high=90, size=(1,)).float()
+    # return get_upward_with_dev(float(random_angle), x_dev, z_dev), random_angle
+    return  get_upward_with_dev(0., x_dev, z_dev), 0.
 
 def rand_rot_mtx():
     roll = torch.randint(high=90, size=(1,)).to(torch.float64)
