@@ -104,12 +104,12 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   camera_dict = prepare_camera_dict(
-    "/home/ubuntu-system/PoseEstimation/RansacLib/dataset/StMarysChurch_matches/st_marys_church_list_queries_with_intrinsics_simple_radial_sorted.txt",
+    "dataset/StMarysChurch_matches/st_marys_church_list_queries_with_intrinsics_simple_radial_sorted.txt",
     args
   )
 
   gt_dict = prepare_gts(
-    "/home/ubuntu-system/PoseEstimation/RansacLib/dataset/StMarysChurch_matches/dataset_test.txt"
+    "dataset/StMarysChurch_matches/dataset_test.txt"
   )
 
   orientation_errors, pose_errors = [], []
