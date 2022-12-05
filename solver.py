@@ -1,18 +1,30 @@
 import torch
 import numpy as np
 
-class Up2P:
+from abc import ABC, abstractmethod
+
+class Solver:
+    
+    @abstractmethod
+    def get_sample_size(self) -> int:
+        raise NotImplemented
+
+class Up2P(Solver):
     
     def __init__(self):
         self.dtype = torch.float64
+        self.min_sample_size: int = 2
         # TODO: add angles to potentially optimize for
         # or use them in a solver itself so not to prerotate the scene
+    
+    def get_sample_size(self) -> int:
+        return self.min_sample_size
     
     # x: [2,3]
     # X: [2,3]
     def __call__(self, x, X):
-        assert x.shape == (2, 3)
-        assert X.shape == (2, 3)
+        assert x.shape == (self.min_sample_size, 3)
+        assert X.shape == (self.min_sample_size, 3)
         # [4, 4]
         # should be transposed as in Eigen order of indexation is a different one
         A = torch.tensor([[-x[0, 2], 0, x[0, 0], X[0, 0] * x[0, 2] - X[0, 2] * x[0, 0]],
