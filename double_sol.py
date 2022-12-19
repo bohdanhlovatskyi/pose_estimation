@@ -1,4 +1,5 @@
 import os
+import statistics
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -50,7 +51,7 @@ class Camera:
     def cam2pix(self, x: np.ndarray):
         assert x.ndim == 2
             
-        x[:, :2] /= x[:, 2]
+        x[:, :2] /= x[:, 2][:, None]
         x[:, :2] = x[:, :2] * self.f
         x[:, 0] += self.cx
         x[:, 1] += self.cy
@@ -95,25 +96,22 @@ class UP2PSolverPipeline(SP):
         for i in (tqdm(iterator) if self.verbose else iterator):
             try:
                 # +1 for evaluation in here
-                pts2d, idcs = self.sampler(pts2D, self.solver.get_sample_size() + 1)
+                min_sample_size = self.solver.get_sample_size()
+                pts2d, idcs = self.sampler(pts2D, min_sample_size + 1)
                 pts3d = pts3D[idcs]
 
-                solv_res = self.solver(pts2d[:pts2d.shape[0] - 1], pts3d[:pts3d.shape[0] - 1])
-                best_sol, err = None, float("+inf")
+                solv_res = self.solver(pts2d[:min_sample_size], pts3d[:min_sample_size])
                 for sol in solv_res:
                     R, t = sol
                     R, t = R.detach().cpu().numpy(), t.detach().cpu().numpy()
-                    translated = R.T @ (pts3d[pts3d.shape[0] - 1] - t)
+                    translated = R.T @ (pts3d[min_sample_size] - t)
                     translated = self.camera.cam2pix(translated[None, :])[0]
-                    if np.linalg.norm(translated - pts2d[pts2d.shape[0] - 1]) < err:
-                        err = np.linalg.norm(translated - pts2D[i])
-                        best_sol = sol
+                    cerr = np.linalg.norm(translated - pts2d[min_sample_size])
+                    if cerr < sol_err:
+                        sol_err = cerr
+                        solution = sol
             except:
                 continue
-
-            if err < sol_err:
-                sol_err = err
-                solution = best_sol 
 
         pose = poselib.CameraPose()
         pose.q = matrix_to_quaternion(solution[0])
@@ -123,10 +121,19 @@ class UP2PSolverPipeline(SP):
 
 class DisplacementRefinerSolver(Solver):
     
-    def __init__(self, min_sample_size: int = 100, models_to_evaluate: int = 3, verbose: bool = False):
+    def __init__(self,
+     min_sample_size: int = 100,
+     outer_models_to_evaluate: int = 100,
+     inner_models_to_evaluate: int = 0,
+     rotations_to_est: int = 50,
+     verbose: bool = False
+     ) -> None:  
         self.min_sample_size = min_sample_size
-        self.models_to_evaluate = models_to_evaluate
+        self.outer_models_to_evaluate = outer_models_to_evaluate
+        self.inner_models_to_evaluate = inner_models_to_evaluate
+        self.rotations_to_est = rotations_to_est
         self.internal_solver = Up2P()
+        self.sampler: Sampler = Sampler()
         self.verbose = verbose
         self.camera: Camera = None
     
@@ -144,6 +151,7 @@ class DisplacementRefinerSolver(Solver):
             projs.append(proj)
 
         # get the proposed prerotation angles, given the displacements
+        x = self.camera.cam2pix(x)
         _, angles = self._get_rot_angles(np.stack(x)[:, :2], np.stack(projs)[:, :2])
         deg_angles = [angle.as_euler("XYZ", degrees=True)[2] for angle in angles]
 
@@ -152,31 +160,43 @@ class DisplacementRefinerSolver(Solver):
             plt.xticks(range(-180, 180, 5))
             plt.show()
         
-        counts = np.bincount([angle + 180.0 for angle in deg_angles])
-        prerotate_with = angles[np.argmax(counts)].as_matrix()
-        
-        return prerotate_with
+        try:
+            counts = np.bincount([angle + 180.0 for angle in deg_angles])
+            
+            # print(counts, counts.shape)
+            # print(np.convolve(counts, np.ones(3), 'same'), np.convolve(counts, np.ones(3), 'same').shape)
+            counts = np.convolve(counts, np.ones(3), 'same')
+            angle_to_prerotate = np.argmax(counts) - 180
+
+            # print("angle to prerotate: ", angle_to_prerotate)
+            prerotate_with = Rotation.from_euler("XYZ", [0, 0, angle_to_prerotate], degrees=True).as_matrix()
+            
+            return prerotate_with
+        except:
+            return Rotation.identity().as_matrix()
 
     def inner_solver(self, x, X):
-        # take the minimal subset from points
-        min_sample_size = self.internal_solver.get_sample_size()
-        idcs = np.random.choice(len(X), min_sample_size + 1)
-        subx, subX = x[idcs], X[idcs] 
-
-        try:
-            inner_solv_res = self.internal_solver(subx[:min_sample_size], subX[:min_sample_size])
-        except:
-            return None, None
-
         err, Rf, tf = None, None, None
-        for Ri, ti in inner_solv_res:
-            Ri, ti = Ri.cpu().numpy(), ti.cpu().numpy()
-            rp = Ri.T @ (subX[min_sample_size] - ti)
-            rp = self.camera.cam2pix(rp[None, :])[0]                    
-            cerr = np.linalg.norm(subx[min_sample_size] - rp)
-            if err is None or cerr < err:
-                err = cerr
-                Rf, tf = Ri, ti
+
+        for _ in range(self.inner_models_to_evaluate):
+            # take the minimal subset from points
+            min_sample_size = self.internal_solver.get_sample_size()
+            idcs = np.random.choice(len(X), min_sample_size + 1)
+            subx, subX = x[idcs], X[idcs] 
+
+            try:
+                inner_solv_res = self.internal_solver(subx[:min_sample_size], subX[:min_sample_size])
+            except:
+                return None, None
+
+            for Ri, ti in inner_solv_res:
+                Ri, ti = Ri.cpu().numpy(), ti.cpu().numpy()
+                rp = Ri.T @ (subX[min_sample_size] - ti)
+                rp = self.camera.cam2pix(rp[None, :])[0]                    
+                cerr = np.linalg.norm(subx[min_sample_size] - rp)
+                if err is None or cerr < err:
+                    err = cerr
+                    Rf, tf = Ri, ti
 
         return Rf, tf
     
@@ -192,37 +212,36 @@ class DisplacementRefinerSolver(Solver):
         
         err, Rf, tf = None, None, None
 
-        for i in tqdm(range(self.models_to_evaluate)):
-            idcs = np.random.choice(len(X), min_sample_size + 1)
-            xx, XX = x[idcs[:min_sample_size]], X[idcs[:min_sample_size]]
+        for i in tqdm(range(self.outer_models_to_evaluate)):
+            pts2d, idcs = self.sampler(x, min_sample_size + 1)
+            pts3d = X[idcs]
             
             # run the solver with default gravity direction so to get an estimate on prerotation
-            try: # this sometimes throws an error if inverse cannot be found
-                solv_res = self.internal_solver(xx, XX)
+            try:
+                solv_res = self.internal_solver(pts2d[:min_sample_size], pts3d[:min_sample_size])
             except:
                 continue
 
-            if not solv_res: continue
-
             for (R, t) in solv_res:
-                prerotate_with = self.get_prerotation_given_guess(R, t, X, x)
+                R, t = R.detach().cpu().numpy(), t.detach().cpu()
+                # prerotate_with = self.get_prerotation_given_guess(R, t, X, x)
                     
-                # prerotate, solve, rotate back
-                Xs = np.array([prerotate_with.T @ x3d for x3d in X])
-                IR, It = self.inner_solver(x, Xs)
-                if IR is None or It is None:
-                    continue
+                # # prerotate, solve, rotate back
+                # Xs = np.array([prerotate_with.T @ x3d for x3d in X.copy()])
+                # IR, It = self.inner_solver(x, Xs)
+                # if IR is None or It is None:
+                #     continue
 
-                R = prerotate_with @ IR
+                # R = prerotate_with @ IR
                 
                 # compute quality of the model
-                rp = R.T @ (X[idcs[min_sample_size]] - It)
+                rp = R.T @ (pts3d[min_sample_size] - t.numpy())
                 rp = self.camera.cam2pix(rp[None, :])[0]
-                cerr = np.linalg.norm(x[idcs[min_sample_size]] - rp)
+                cerr = np.linalg.norm(rp - pts2d[min_sample_size])
                 if err is None or cerr < err:
                     err = cerr
-                    Rf, tf = R, It 
-                
+                    Rf, tf = R, t.numpy()
+
         if Rf is None or tf is None:
             return None
 
@@ -236,7 +255,7 @@ class DisplacementRefinerSolver(Solver):
         centers = []
         indexes = []
         angles = []
-        for _ in range(1000):
+        for _ in range(self.rotations_to_est):
             idcs = np.random.choice(len(gt), 2)
             indexes.append(idcs)
 
@@ -248,7 +267,7 @@ class DisplacementRefinerSolver(Solver):
             
         mean_c = np.array([np.median([elm[0] for elm in centers]), np.median([elm[1] for elm in centers])])
 
-        for i in range(1000):
+        for i in range(self.rotations_to_est):
             idcs = indexes[i]
 
             gt1, proj1 = gt[idcs[0]], proj[idcs[0]]
@@ -308,7 +327,6 @@ class DisplacementRefinerSolver(Solver):
         cgt2 = gt2 - c
         cproj2 = proj2 - c
 
-
         res = Rotation.align_vectors(
             a=np.array(
                 [[*cgt1, 0],
@@ -341,7 +359,8 @@ class Dataset:
         self.gts = self._prepare_gts(gts_path)
     
         self.idx: int = 0
-        self.seq = [3, 5, 13]
+        # self.seq = [3, 5, 13]
+        self.seq = [3]
         self.paths = []
         for s in self.seq:
             for f in os.listdir(f"{self.BASE}/seq{s}"):
@@ -438,6 +457,22 @@ class Dataset:
 
         return gts
 
+def print_pose(pose):
+    print(Rotation.from_quat(pose.q).as_euler("XYZ", degrees=True), pose.t)
+
+def print_stats(pose_errors, orientation_errors):
+    pos_errors = pose_errors
+    orient_errors = orientation_errors
+    print(" Couldn't localize " + str(orientation_errors.count(180.0)) + " out of " + str(len(orientation_errors)) + " images") 
+    print(" Median position error: " +  str(round(statistics.median(pos_errors),3)) + ", median orientation errors: " + str(round(statistics.median(orient_errors),2)))
+
+    med_pos = statistics.median(pos_errors)
+    med_orient = statistics.median(orient_errors)
+    counter = 0
+    for i in range(0, len(pose_errors)):
+        if pose_errors[i] <= med_pos and orientation_errors[i] <= med_orient:
+            counter += 1
+    print(" Percentage of poses within the median: " + str(100.0 * float(counter) / float(len(pose_errors))) + " % ")
 
 if __name__ == "__main__":
     seed = 12
@@ -450,22 +485,51 @@ if __name__ == "__main__":
     sampler = Sampler()
     ref = DisplacementRefinerSolver(verbose=False)            
     solv_pipe = UP2PSolverPipeline()
+    p3pwrapper = P3PBindingWrapperPipeline(
+        ransac_conf = {
+            # 'max_reproj_error': args.ransac_thresh
+            'min_iterations': min(100, conf.max_ransac_iters),
+            'max_iterations': conf.max_ransac_iters,
+            'progressive_sampling': True,
+            'max_prosac_iterations': conf.max_ransac_iters
+            },
+            
+            bundle_adj_conf = {
+                'loss_scale' : 1.0,
+            }                                              
+    )
 
-    orientation_errors, pose_errors = [], []
+
+    orientation_errors_np, pose_errors_np = [], []
+    orientation_errors_p, pose_errors_p = [], []
     # iterator = tqdm(enumerate(dataset)) if not dataset.verbose else enumerate(dataset)
     iterator = enumerate(dataset)
     for idx, (gt_pose, pts2D, pts3D, camera_dict) in iterator:
         print("------------------------ ", idx, " ------------------------------")
+        true_prerot = p3pwrapper(np.stack(pts2D), np.stack(pts3D), camera_dict)
+        print_pose(true_prerot)
+
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         estim_pose_no_prerot = solv_pipe(np.stack(pts2D), np.stack(pts3D), camera_dict)
+        
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         estim_pose = ref(np.stack(pts2D), np.stack(pts3D), camera_dict)
 
-        pose_error, orient_error = dataset.compute_metric(gt_pose, estim_pose_no_prerot)
-        print("np[pe, oe]: ", pose_error, orient_error)
-        pose_error, orient_error = dataset.compute_metric(gt_pose, estim_pose)
-        print("p[pe, oe]: ", pose_error, orient_error)
+        pose_error_np, orient_error_np = dataset.compute_metric(gt_pose, estim_pose_no_prerot)
+        print("np[pe, oe]: ", pose_error_np, orient_error_np)
+        pose_error_p, orient_error_p = dataset.compute_metric(gt_pose, estim_pose)
+        print("p[pe, oe]: ", pose_error_p, orient_error_p)
 
         if idx == 1:
             break
 
-        orientation_errors.append(orient_error)
-        pose_errors.append(pose_error)
+        orientation_errors_np.append(orient_error_np)
+        pose_errors_np.append(pose_error_np)
+
+        orientation_errors_p.append(orient_error_p)
+        pose_errors_p.append(pose_error_p)
+    else:
+        print_stats(pose_errors_np, orientation_errors_np)
+        print_stats(pose_errors_p, orientation_errors_p)
