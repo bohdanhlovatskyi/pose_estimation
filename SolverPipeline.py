@@ -26,7 +26,7 @@ class P3PBindingWrapperPipeline(SolverPipeline):
             pts2D, pts3D, camera_dict, self.ransac_conf, self.bundle_adj_conf
         )
         
-        return pose
+        return pose.R, pose.t
     
 class UP2PSolverPipeline(SolverPipeline):
     

@@ -3,6 +3,9 @@ import argparse
 import statistics
 import numpy as np
 
+
+import sys
+print(sys.executable)
 import poselib
 
 VSP = "dataset/StMarysChurch_matches"
