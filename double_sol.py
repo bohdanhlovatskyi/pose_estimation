@@ -14,7 +14,7 @@ from pytorch3d.transforms import matrix_to_quaternion
 
 import poselib
 
-from solver import Up2P, Solver
+from solver import Up2P, Solver, P3PWrapper
 from SolverPipeline import P3PBindingWrapperPipeline
 from SolverPipeline import SolverPipeline as SP
 
@@ -97,10 +97,14 @@ class Sampler:
         return pts[idcs], idcs
 
 
-class UP2PSolverPipeline(SP):
+class SolverPipeline(SP):
     
-    def __init__(self, num_models_to_eval: int = 2000, verbose: bool = False):
-        self.solver = Up2P()
+    def __init__(self,
+     num_models_to_eval: int = 2000,
+     verbose: bool = False,
+     up2p: bool = False
+    ) -> None:
+        self.solver = Up2P() if up2p else P3PWrapper()
         self.sampler = Sampler()
         self.camera: Camera = None
         self.num_models_to_eval = num_models_to_eval
@@ -352,37 +356,22 @@ class DisplacementRefinerSolver(Solver):
         second_center = (gt2 + proj2) / 2
 
         c = self._get_intersect(
-            first_center,
-            first_center + n1,
-            second_center,
-            second_center + n2,
+            first_center, first_center + n1,
+            second_center, second_center + n2,
         )
-
 
         return c
     
     def _get_rotation(self, gt1, proj1, gt2, proj2, c):
-        cgt1 = gt1 - c
-        cproj1 = proj1 - c
-
-        cgt2 = gt2 - c
-        cproj2 = proj2 - c
+        cgt1, cproj1 = gt1 - c, proj1 - c
+        cgt2, cproj2 = gt2 - c, proj2 - c
 
         res = Rotation.align_vectors(
-            a=np.array(
-                [[*cgt1, 0],
-                 [*cgt2, 0]]
-            ),
-            b=np.array(
-                [
-                    [*cproj1, 0],
-                    [*cproj2, 0]
-                ]
-            )
+            a=np.array([[*cgt1, 0], [*cgt2, 0]]),
+            b=np.array([[*cproj1, 0], [*cproj2, 0]])
         )
 
         return res[0]
-
 
 '''
 convention: 
@@ -541,7 +530,8 @@ if __name__ == "__main__":
 
     sampler = Sampler()
     ref = DisplacementRefinerSolver(verbose=False)            
-    solv_pipe = UP2PSolverPipeline()
+    p3p_solv_pipe = SolverPipeline()
+    p2p_solv_pipe = SolverPipeline(up2p=True)
     p3pwrapper = P3PBindingWrapperPipeline(
         ransac_conf = {
             # 'max_reproj_error': args.ransac_thresh
@@ -556,6 +546,7 @@ if __name__ == "__main__":
             }                                              
     )
 
+    orientation_errors_p3pr, pose_errors_p3pr = [], []
     orientation_errors_p3p, pose_errors_p3p = [], []
     orientation_errors_np, pose_errors_np = [], []
     orientation_errors_p, pose_errors_p = [], []
@@ -565,36 +556,41 @@ if __name__ == "__main__":
         print("------------------------ ", idx, " ------------------------------")
         print("gt: ", Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt)
 
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         R, t = p3pwrapper(np.stack(pts2D), np.stack(pts3D), camera_dict)
-        pose_error_p3p, orient_error_p3p = dataset.compute_metric(Rgt, tgt, R, t)
-        orientation_errors_p3p.append(orient_error_p3p)
-        pose_errors_p3p.append(pose_error_p3p)
-        print_pose(R, t)
+        pose_error_p3pr, orient_error_p3pr = dataset.compute_metric(Rgt, tgt, R, t)
+        print("rp3p[pe, oe]: ", pose_error_p3pr, orient_error_p3pr, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
+        orientation_errors_p3pr.append(orient_error_p3pr)
+        pose_errors_p3pr.append(pose_error_p3pr)
 
         np.random.seed(seed)
         torch.manual_seed(seed)
-        R, t = solv_pipe(np.stack(pts2D), np.stack(pts3D), camera_dict) 
-        print_pose(R, t.numpy())
+        R, t = p3p_solv_pipe(np.stack(pts2D), np.stack(pts3D), camera_dict) 
+        pose_error_p3p, orient_error_p3p = dataset.compute_metric(Rgt, tgt, R.numpy(), t.numpy())
+        print("p3p[pe, oe]: ", pose_error_p3p, orient_error_p3p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t.numpy())
+        orientation_errors_p3p.append(orient_error_p3p)
+        pose_errors_p3p.append(pose_error_p3p)
+
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        R, t = p2p_solv_pipe(np.stack(pts2D), np.stack(pts3D), camera_dict) 
         pose_error_np, orient_error_np = dataset.compute_metric(Rgt, tgt, R.numpy(), t.numpy())
-        print("np[pe, oe]: ", pose_error_np, orient_error_np)
+        print("np[pe, oe]: ", pose_error_np, orient_error_np, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t.numpy())
+        orientation_errors_np.append(orient_error_np)
+        pose_errors_np.append(pose_error_np)
 
         np.random.seed(seed)
         torch.manual_seed(seed)
         R, t = ref(np.stack(pts2D), np.stack(pts3D), camera_dict)
-        print_pose(R, t)
-
         pose_error_p, orient_error_p = dataset.compute_metric(Rgt, tgt, R, t)
-        print("p[pe, oe]: ", pose_error_p, orient_error_p)
+        print("p[pe, oe]: ", pose_error_p, orient_error_p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
+        orientation_errors_p.append(orient_error_p)
+        pose_errors_p.append(pose_error_p)
 
         if idx == 5:
             break
-
-        orientation_errors_np.append(orient_error_np)
-        pose_errors_np.append(pose_error_np)
-
-        # orientation_errors_p.append(orient_error_p)
-        # pose_errors_p.append(pose_error_p)
     else:
-        print_stats(pose_errors_p3p, orientation_errors_p3p)
+        print_stats(pose_errors_p3pr, orientation_errors_p3pr)
         print_stats(pose_errors_np, orientation_errors_np)
-        # print_stats(pose_errors_p, orientation_errors_p)
+        print_stats(pose_errors_p, orientation_errors_p)

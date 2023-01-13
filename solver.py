@@ -2,12 +2,47 @@ import torch
 import numpy as np
 
 from abc import ABC, abstractmethod
+from scipy.spatial.transform import Rotation
+
+import poselib
+
 
 class Solver:
     
     @abstractmethod
     def get_sample_size(self) -> int:
         raise NotImplemented
+
+    @abstractmethod
+    def __call__(self, x, X):
+        raise NotImplemented
+
+    @staticmethod
+    def pl_to_scipy(q):
+        return [*q[1:], q[0]]
+
+class P3PWrapper(Solver):
+
+    def __init__(self) -> None:
+        self.min_sample_size = 3
+
+    def __call__(self, x, X):
+        sols = poselib.p3p(x, X)
+        solutions = []
+
+        for sol in sols:    
+            try:
+                R, t = Rotation.from_quat(Solver.pl_to_scipy(sol.q)).as_matrix(), sol.t
+                # t = -R @ t
+                solutions.append((torch.tensor(R), torch.tensor(t)))
+            except Exception as ex:
+                continue
+
+        return solutions
+
+    def get_sample_size(self) -> int:
+        return self.min_sample_size
+
 
 class Up2P(Solver):
     
