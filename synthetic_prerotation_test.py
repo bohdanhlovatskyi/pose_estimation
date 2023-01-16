@@ -25,7 +25,7 @@ class Config:
     
     # [TODO][IMPORTNAT]: not properly tested, be aware of using for
     # some experiments
-    pixel_noise: float = 0.
+    pixel_noise: float = 2.
 
 conf = Config()
 
@@ -178,7 +178,9 @@ if __name__ == "__main__":
     orientation_errors_np, pose_errors_np = [], []
     orientation_errors_p, pose_errors_p = [], []
         
-
+    CRED = '\033[91m'
+    CYELLOW = '\033[43m'
+    CEND = '\033[0m'
     PRINT = False
     seed = 13
     for _ in tqdm(range(1000)):
@@ -186,7 +188,7 @@ if __name__ == "__main__":
             xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(10, (-25, 55), conf)
             Rgt, tgt = Rgt.numpy(), tgt.numpy()
 
-            if PRINT: print(Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt)
+            if PRINT: print(CRED, Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt, CEND)
 
             assert np.allclose(xs, camera.cam2pix((Rgt @ Xs.T + tgt[:, None]).T), 1)
 
@@ -198,19 +200,19 @@ if __name__ == "__main__":
             # orientation_errors_p3pr.append(orient_error_p3pr)
             # pose_errors_p3pr.append(pose_error_p3pr)
 
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            R, t = p3p_solv_pipe(xs, Xs, camera_dict) 
-            pose_error_p3p, orient_error_p3p = compute_metric(Rgt, tgt, R, t)
-            if PRINT: print("p3p[pe, oe]: ", pose_error_p3p, orient_error_p3p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
-            orientation_errors_p3p.append(orient_error_p3p)
-            pose_errors_p3p.append(pose_error_p3p)
+            # np.random.seed(seed)
+            # torch.manual_seed(seed)
+            # R, t = p3p_solv_pipe(xs, Xs, camera_dict) 
+            # pose_error_p3p, orient_error_p3p = compute_metric(Rgt, tgt, R, t)
+            # if PRINT: print("p3p[pe, oe]: ", pose_error_p3p, orient_error_p3p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
+            # orientation_errors_p3p.append(orient_error_p3p)
+            # pose_errors_p3p.append(pose_error_p3p)
 
             np.random.seed(seed)
             torch.manual_seed(seed)
             R, t = p2p_solv_pipe(xs, Xs, camera_dict) 
             pose_error_np, orient_error_np = compute_metric(Rgt, tgt, R, t)
-            if PRINT: print("np[pe, oe]: ", pose_error_np, orient_error_np, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
+            if PRINT: print(CYELLOW, "np[pe, oe]: ", pose_error_np, orient_error_np, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
             orientation_errors_np.append(orient_error_np)
             pose_errors_np.append(pose_error_np)
 
@@ -218,14 +220,15 @@ if __name__ == "__main__":
             torch.manual_seed(seed)
             R, t = ref(xs, Xs, camera_dict)
             pose_error_p, orient_error_p = compute_metric(Rgt, tgt, R, t)
-            if PRINT: print("p[pe, oe]: ", pose_error_p, orient_error_p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
+            if PRINT: print(CYELLOW, "p[pe, oe]: ", pose_error_p, orient_error_p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
             orientation_errors_p.append(orient_error_p)
             pose_errors_p.append(pose_error_p)
-        except Exception:
+        except Exception as ex:
+            print(ex)
             continue
     else:
-        print("\n\nPure P3P: ")
-        print_stats(pose_errors_p3p, orientation_errors_p3p)
+        # print("\n\nPure P3P: ")
+        # print_stats(pose_errors_p3p, orientation_errors_p3p)
         print("\n\nPure Up2P: ")
         print_stats(pose_errors_np, orientation_errors_np)
         print("\n\nPrerotate: ")

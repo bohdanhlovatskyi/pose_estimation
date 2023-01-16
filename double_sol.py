@@ -135,7 +135,7 @@ class SolverPipeline(SP):
                 if cerr < sol_err:
                     sol_err = cerr
                     solution = (R, t)
-                    # print(translated, pts2d[min_sample_size])
+                    # print("[no-prerot convergence]: ", translated, pts2d[min_sample_size])
 
         return solution
 
@@ -239,7 +239,7 @@ class DisplacementRefinerSolver(Solver):
                 rp = self.camera.cam2pix(rp[None, :])[0]                    
                 cerr = np.linalg.norm(subx[min_sample_size] - rp)
                 if err is None or cerr < err:
-                    # print("inner", cerr, )
+                    # print("[prerot inner convergence]: ", rp, subx[min_sample_size])
                     err = cerr
                     Rf, tf = Ri, ti
 
@@ -274,7 +274,7 @@ class DisplacementRefinerSolver(Solver):
 
                 # prerotate_with = self.get_prerotation_given_guess(R, t, X, x)
                 prerotate_with = self.get_prerotation_ls(R, t, X, x)
-                # print("prerotate_with: ", Rotation.from_matrix(prerotate_with).as_euler("XYZ", degrees=True))
+                # print('\033[44m', "prerotate_with: ", Rotation.from_matrix(prerotate_with).as_euler("XYZ", degrees=True), '\033[0m')
                 # prerotate_with = self.get_prerotation_dummy(R, t, X, x)
 
                 # prerotate, solve, rotate back
@@ -284,11 +284,12 @@ class DisplacementRefinerSolver(Solver):
                     continue
                 R = prerotate_with @ IR
 
-                rp = R @ pts3d[min_sample_size] + It
-                rp = self.camera.cam2pix(rp[None, :]).squeeze()
-                cerr = np.linalg.norm(rp - pts2d[min_sample_size])
+                rp = R @ pts3d + It
+                rp = self.camera.cam2pix(rp)
+                cerr = np.linalg.norm(rp - pts2d)
                 if err is None or cerr < err:
-                    # print(cerr, rp, pts2d[min_sample_size])
+                    # print("[prerot convergence]: ", rp, pts2d)
+                    # print("[prerot convergence]: ", cerr)
                     err = cerr
                     Rf, tf = R, It
                 
