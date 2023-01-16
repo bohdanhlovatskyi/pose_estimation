@@ -36,6 +36,7 @@ class P3PWrapper(Solver):
                 # t = -R @ t
                 solutions.append((torch.tensor(R), torch.tensor(t)))
             except Exception as ex:
+                # print(ex)
                 continue
 
         return solutions
@@ -84,7 +85,7 @@ class Up2P(Solver):
        
         assert A.shape == (4, 4) and b.shape == (4, 2)
         
-        b = A.inverse() @ b
+        b = torch.linalg.pinv(A) @ b
         sols = self.solve_quadratic_real(1., b[3, 0], b[3, 1])
         if sols is None:
             return []

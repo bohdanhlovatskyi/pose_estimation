@@ -37,14 +37,11 @@ R = [
         b 0 a
     ]
 '''
+
 # it necessary to pre-rotate the input such that this is satisfied (?)
 # A * [t1,t2,t3,q^2] + b * [q, 1] = 0
 # 
 
-# 
-#  R t  - view matrix - t - position of world origin in camera coordinates
-#  "how world transformed relative to the camera"
-#  
 
 def pl_to_scipy(q: List[float]):
     return [*q[1:], q[0]]
@@ -98,9 +95,9 @@ class Sampler:
 
 
 class SolverPipeline(SP):
-    
+
     def __init__(self,
-     num_models_to_eval: int = 2000,
+     num_models_to_eval: int = 40,
      verbose: bool = False,
      up2p: bool = False
     ) -> None:
@@ -125,7 +122,8 @@ class SolverPipeline(SP):
                     self.camera.pix2cam(pts2d[:min_sample_size]),
                     pts3d[:min_sample_size]
                 )
-            except RuntimeError as err: # sometimes inverse cannot be found
+            except Exception as ex: # sometimes inverse cannot be found
+                # print(ex)
                 continue
 
             for sol in solv_res:
@@ -136,7 +134,7 @@ class SolverPipeline(SP):
                 cerr = np.linalg.norm(translated - pts2d[min_sample_size])
                 if cerr < sol_err:
                     sol_err = cerr
-                    solution = sol
+                    solution = (R, t)
                     # print(translated, pts2d[min_sample_size])
 
         return solution
@@ -144,10 +142,10 @@ class SolverPipeline(SP):
 class DisplacementRefinerSolver(Solver):
     
     def __init__(self,
-     min_sample_size: int = 100,
-     outer_models_to_evaluate: int = 200,
-     inner_models_to_evaluate: int = 10,
-     rotations_to_est: int = 1000,
+     min_sample_size: int = 20,
+     outer_models_to_evaluate: int = 10,
+     inner_models_to_evaluate: int = 3,
+     rotations_to_est: int = 1,
      verbose: bool = False
      ) -> None:  
         self.min_sample_size = min_sample_size
@@ -241,11 +239,12 @@ class DisplacementRefinerSolver(Solver):
                 rp = self.camera.cam2pix(rp[None, :])[0]                    
                 cerr = np.linalg.norm(subx[min_sample_size] - rp)
                 if err is None or cerr < err:
+                    # print("inner", cerr, )
                     err = cerr
                     Rf, tf = Ri, ti
 
         return Rf, tf
-    
+
 
     @torch.no_grad()
     def __call__(self, x, X, camera_dict):
@@ -275,6 +274,7 @@ class DisplacementRefinerSolver(Solver):
 
                 # prerotate_with = self.get_prerotation_given_guess(R, t, X, x)
                 prerotate_with = self.get_prerotation_ls(R, t, X, x)
+                # print("prerotate_with: ", Rotation.from_matrix(prerotate_with).as_euler("XYZ", degrees=True))
                 # prerotate_with = self.get_prerotation_dummy(R, t, X, x)
 
                 # prerotate, solve, rotate back
@@ -293,7 +293,7 @@ class DisplacementRefinerSolver(Solver):
                     Rf, tf = R, It
                 
         if Rf is None or tf is None:
-            return None
+            return None, None
 
         return Rf, tf
 
@@ -344,7 +344,7 @@ class DisplacementRefinerSolver(Solver):
         if z == 0:                          # lines are parallel
             return (float('inf'), float('inf'))
         return (x/z, y/z)
-    
+
     def _get_norm_of_disp(self, gt, proj):
         vec = (proj - gt)
         return (-vec[1], vec[0])
@@ -503,7 +503,7 @@ class Dataset:
 
         return gts
 
-def print_pose(R, t):  
+def print_pose(R, t):
     print(Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t)
 
 def print_stats(pose_errors, orientation_errors):
@@ -553,6 +553,13 @@ if __name__ == "__main__":
     # iterator = tqdm(enumerate(dataset)) if not dataset.verbose else enumerate(dataset)
     iterator = enumerate(dataset)
     for idx, (Rgt, tgt, pts2D, pts3D, camera_dict) in iterator:
+        # if idx == 0: # perform sanity check
+        #      camera = Camera.from_camera_dict(camera_dict)
+
+        #      print(pts2D[0])
+        #      print(camera.cam2pix((Rgt @ pts3D[0] + tgt)[None, :]))
+        #      exit(0)
+
         print("------------------------ ", idx, " ------------------------------")
         print("gt: ", Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt)
 
