@@ -183,9 +183,9 @@ if __name__ == "__main__":
     CEND = '\033[0m'
     PRINT = False
     seed = 13
-    for _ in tqdm(range(1000)):
+    for _ in tqdm(range(10)):
         try:
-            xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(10, (-25, 55), conf)
+            xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(100, (-2, 20), conf)
             Rgt, tgt = Rgt.numpy(), tgt.numpy()
 
             if PRINT: print(CRED, Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt, CEND)

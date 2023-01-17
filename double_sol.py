@@ -9,6 +9,7 @@ import torch
 import pickle
 
 from tqdm import tqdm
+from skimage.measure import ransac
 from scipy.spatial.transform import Rotation
 from pytorch3d.transforms import matrix_to_quaternion
 
@@ -93,11 +94,42 @@ class Sampler:
         
         return pts[idcs], idcs
 
+class PrerotModel:
+    
+    def estimate(self, data) -> bool: 
+        # [N, 4]
+        assert data.shape[1] == 4
+        x, projs = data[:, :2], data[:, 2:]
+        # print(x.shape, projs.shape, np.mean(x, axis=1))
+        x -= np.mean(x, axis=0)[None, :]
+        projs -= np.mean(projs, axis=0)[None, :]
+
+        x /= np.mean(np.square(x))
+        projs /= np.mean(np.square(projs))
+        
+        angle_to_prerotate = np.arctan2(
+            np.sum(projs[:, 0] * x[:, 1] - projs[:, 1] * x[:, 0]),
+            np.sum(projs[:, 0] * x[:, 0] + projs[:, 1] * x[:, 1])
+        )
+
+        self.params = angle_to_prerotate
+        return True
+    
+    def residuals(self, data):
+        # [N, 4]
+        x, projs = data[:, :2], data[:, 2:]          
+        norm_x = x.T - np.mean(x.T, axis=1)[:, None]
+        norm_projs = projs.T - np.mean(projs.T, axis=1)[:, None]
+
+        c, s = np.cos(self.params), np.sin(self.params)
+        R = np.array(((c, s), (-s, c)))
+
+        return np.linalg.norm(np.square(norm_x - R.T @ norm_projs), axis=0)
 
 class SolverPipeline(SP):
 
     def __init__(self,
-     num_models_to_eval: int = 40,
+     num_models_to_eval: int = 100,
      verbose: bool = False,
      up2p: bool = False
     ) -> None:
@@ -143,8 +175,8 @@ class DisplacementRefinerSolver(Solver):
     
     def __init__(self,
      min_sample_size: int = 20,
-     outer_models_to_evaluate: int = 10,
-     inner_models_to_evaluate: int = 3,
+     outer_models_to_evaluate: int = 20,
+     inner_models_to_evaluate: int = 5,
      rotations_to_est: int = 1,
      verbose: bool = False
      ) -> None:  
@@ -194,6 +226,22 @@ class DisplacementRefinerSolver(Solver):
         x = np.stack(x)[:, :2]
         projs = np.stack(projs)[:, :2]
 
+        # debug vis projs
+        # points = x.T.copy()
+        # rotated_points = projs.T.copy()
+        # fig, ax = plt.subplots()
+        # plt.scatter(points[0, :], points[1, :])
+        # plt.scatter(rotated_points[0, :], rotated_points[1, :])
+        # ax.quiver(
+        #     points[0, :],
+        #     points[1, :],
+        #     rotated_points[0, :] - points[0, :],
+        #     rotated_points[1, :] - points[1, :],
+        #     angles='xy', scale_units='xy', scale=1,
+        #     width=0.005 / 4
+        # )
+        # plt.show()
+
         # normalize
         x -= np.mean(x, axis=0)
         projs -= np.mean(projs, axis=0)
@@ -209,6 +257,28 @@ class DisplacementRefinerSolver(Solver):
         )
 
         prerotate_with = Rotation.from_euler("XYZ", [0, 0, angle_to_prerotate], degrees=False).as_matrix()
+
+        return prerotate_with
+
+    def get_prerotation_ls_ransac(self, R, t, X, x): 
+        
+        projs = self.camera.cam2pix((R @ X.T + t[:, None]).T)
+
+        x = np.stack(x)[:, :2]
+        projs = np.stack(projs)[:, :2]
+
+        model, _ = ransac(
+            np.concatenate([x, projs], axis=1), 
+            PrerotModel, 
+            min_samples=5, 
+            residual_threshold=1e4,
+        )
+
+        if model is not None:
+            prerotate_with = Rotation.from_euler(
+                "XYZ", [0, 0, model.params], degrees=False).as_matrix()
+        else:
+            prerotate_with = Rotation.identity().as_matrix()
 
         return prerotate_with
 
@@ -238,6 +308,7 @@ class DisplacementRefinerSolver(Solver):
                 rp = Ri @ subX[min_sample_size] + ti
                 rp = self.camera.cam2pix(rp[None, :])[0]                    
                 cerr = np.linalg.norm(subx[min_sample_size] - rp)
+                # print(cerr)
                 if err is None or cerr < err:
                     # print("[prerot inner convergence]: ", rp, subx[min_sample_size])
                     err = cerr
@@ -273,8 +344,9 @@ class DisplacementRefinerSolver(Solver):
                 R, t = R.detach().cpu().numpy(), t.detach().cpu().numpy()
 
                 # prerotate_with = self.get_prerotation_given_guess(R, t, X, x)
-                prerotate_with = self.get_prerotation_ls(R, t, X, x)
-                # print('\033[44m', "prerotate_with: ", Rotation.from_matrix(prerotate_with).as_euler("XYZ", degrees=True), '\033[0m')
+                # prerotate_with = self.get_prerotation_ls(R, t, X, x)
+                prerotate_with = self.get_prerotation_ls_ransac(R, t, X, x)
+                print('\033[44m', "prerotate_with: ", Rotation.from_matrix(prerotate_with).as_euler("XYZ", degrees=True), '\033[0m')
                 # prerotate_with = self.get_prerotation_dummy(R, t, X, x)
 
                 # prerotate, solve, rotate back
