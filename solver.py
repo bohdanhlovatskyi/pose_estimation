@@ -59,6 +59,24 @@ class Up2P(Solver):
     # x: [2,3]
     # X: [2,3]
     def __call__(self, x, X):
+        res = []
+        cps = poselib.up2p(x, X)
+        if cps is None: return res
+
+        for cp in cps:
+            if np.isnan(np.min(cp.q)) or np.isnan(np.min(cp.t)):
+                continue
+                
+            R = Rotation.from_quat(Solver.pl_to_scipy(cp.q)).as_matrix()
+            fixer = np.eye(3)
+            fixer[0, 0] = -1
+            fixer[2, 2] = -1
+            R = R @ fixer
+            t = -R @ cp.t
+            res.append((torch.tensor(R), torch.tensor(t)))
+
+        return res
+
         assert x.shape == (self.min_sample_size, 3)
         assert X.shape == (self.min_sample_size, 3)
         # [4, 4]
@@ -97,10 +115,11 @@ class Up2P(Solver):
             cq = (1 - q2) * inv_norm
             sq = 2 * q * inv_norm
             
+            # [!!!]: we already create this transposed 
             R = torch.eye(3, dtype=self.dtype)
             R[0, 0] = cq
-            R[2, 0] = sq
-            R[0, 2] = -sq
+            R[2, 0] = -sq
+            R[0, 2] = sq
             R[2, 2] = cq
 
             t = b[:3, 0] * q + b[:3, 1]

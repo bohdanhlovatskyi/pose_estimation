@@ -7,10 +7,12 @@ import poselib
 
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation
-from utils.rotation_utils import get_random_upward
+from utils.rotation_utils import get_random_upward, get_upward_with_dev, get_rt_mtx
 from double_sol import SolverPipeline, DisplacementRefinerSolver, Camera
 from SolverPipeline import P3PBindingWrapperPipeline
 from dataclasses import dataclass
+
+from typing import Union
 
 @dataclass
 class Config:
@@ -94,7 +96,10 @@ def generate_outlier(x, conf):
 
 from typing import Tuple
 def generate_examples(num_of_examples: int,
-                      dev: Tuple[float, float] = (0., 0.), conf: Config = conf):
+                      dev: Tuple[float, float] = (0., 0.),
+                      sim_idx: Union[None, int] = None, 
+                      conf: Config = conf
+                     ):
     num_of_examples = num_of_examples // 2
     
     num_inliers = num_of_examples * conf.inliers_ratio
@@ -103,7 +108,10 @@ def generate_examples(num_of_examples: int,
     if num_of_examples == 0:
         num_of_examples, num_inliers, num_outliers = 1, 1, 0
     
-    R, rand_angle = get_random_upward(*dev)
+    if sim_idx is not None:
+        R, rand_angle = get_upward_with_dev(sim_idx, *dev), sim_idx
+    else:
+        R, rand_angle = get_random_upward(*dev)
     t = torch.rand(3, )
 
     # [TODO] [IMPORTANT]: under such generation we cannot get model where one of the points is an inlier
@@ -126,7 +134,7 @@ def generate_examples(num_of_examples: int,
     return xs, Xs, inliers, R, t, rand_angle
 
 def compute_metric(Rgt, tgt, R, t):
-    rot_error = np.arccos((np.trace(np.matmul(R.T, Rgt)) - 1.0) / 2.0) * 180.0 / np.pi
+    rot_error = np.arccos((np.trace(np.matmul(Rgt, R)) - 1.0) / 2.0) * 180.0 / np.pi
     if np.isnan(rot_error):
         return 1000000.0, 180.0
     else:
@@ -181,16 +189,19 @@ if __name__ == "__main__":
     CRED = '\033[91m'
     CYELLOW = '\033[43m'
     CEND = '\033[0m'
-    PRINT = False
+    PRINT = True
     seed = 13
-    for _ in tqdm(range(10)):
-        try:
-            xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(100, (-2, 20), conf)
-            Rgt, tgt = Rgt.numpy(), tgt.numpy()
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
 
-            if PRINT: print(CRED, Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt, CEND)
+    for sim_idx in tqdm(range(0, 5)):
+        xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(100, (0, 40), sim_idx, conf)
+        Rgt, tgt = Rgt.numpy(), tgt.numpy()
 
-            assert np.allclose(xs, camera.cam2pix((Rgt @ Xs.T + tgt[:, None]).T), 1)
+        if PRINT: print(CRED, Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt, CEND)
+        if PRINT: print(Rgt)
+        assert np.allclose(xs, camera.cam2pix((Rgt @ Xs.T + tgt[:, None]).T), 2)
 
             # np.random.seed(seed)
             # torch.manual_seed(seed)
@@ -208,24 +219,24 @@ if __name__ == "__main__":
             # orientation_errors_p3p.append(orient_error_p3p)
             # pose_errors_p3p.append(pose_error_p3p)
 
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            R, t = p2p_solv_pipe(xs, Xs, camera_dict) 
-            pose_error_np, orient_error_np = compute_metric(Rgt, tgt, R, t)
-            if PRINT: print(CYELLOW, "np[pe, oe]: ", pose_error_np, orient_error_np, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
-            orientation_errors_np.append(orient_error_np)
-            pose_errors_np.append(pose_error_np)
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        R, t = p2p_solv_pipe(xs, Xs, camera_dict) 
+        pose_error_np, orient_error_np = compute_metric(Rgt, tgt, R, t)
+        if PRINT: print(CYELLOW, "np[pe, oe]: ", pose_error_np, orient_error_np, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
+        if PRINT: print(R)
+        orientation_errors_np.append(orient_error_np)
+        pose_errors_np.append(pose_error_np)
 
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            R, t = ref(xs, Xs, camera_dict)
-            pose_error_p, orient_error_p = compute_metric(Rgt, tgt, R, t)
-            if PRINT: print(CYELLOW, "p[pe, oe]: ", pose_error_p, orient_error_p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
-            orientation_errors_p.append(orient_error_p)
-            pose_errors_p.append(pose_error_p)
-        except Exception as ex:
-            print(ex)
-            continue
+        random.seed(seed)            
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        R, t = ref(xs, Xs, camera_dict)
+        pose_error_p, orient_error_p = compute_metric(Rgt, tgt, R, t)
+        if PRINT: print(CYELLOW, "p[pe, oe]: ", pose_error_p, orient_error_p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
+        orientation_errors_p.append(orient_error_p)
+        pose_errors_p.append(pose_error_p)
     else:
         # print("\n\nPure P3P: ")
         # print_stats(pose_errors_p3p, orientation_errors_p3p)

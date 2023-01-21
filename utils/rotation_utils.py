@@ -29,21 +29,23 @@ def get_yaw_mtx(yaw: float, device: torch.device, dtype: torch.dtype):
                            [0., 0., 1.]],
                          dtype=dtype)
 
-def get_rt_mtx(roll: float, pitch: float, yaw: float,
+# z, y, x
+def get_rt_mtx(yaw: float, pitch: float, roll: float,
                device: torch.device, dtype: torch.dtype):
-    RX = get_roll_mtx(roll, device, dtype)
     RZ = get_yaw_mtx(yaw, device, dtype)
     RY = get_pitch_mtx(pitch, device, dtype)
+    RX = get_roll_mtx(roll, device, dtype)
 
-    R = torch.mm(RZ, RY)
-    R = torch.mm(R, RX)
+    # roll, pitch, yaw
+
+    R = RX @ (RY @ RZ)
 
     return R
 
 def get_upward_with_dev(rot: float, x_dev: float, z_dev: float,
                         device: torch.device = torch.device('cpu'),
                         dtype: torch.dtype = torch.float64):
-    return get_rt_mtx(x_dev, rot, z_dev, device, dtype)
+    return get_rt_mtx(z_dev, rot, x_dev, device, dtype)
 
 def get_random_upward(x_dev: float = 0., z_dev: float = 0.):
     random_angle = torch.randint(high=90, size=(1,)).float()
