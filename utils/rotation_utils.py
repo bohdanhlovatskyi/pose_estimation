@@ -49,7 +49,7 @@ def get_upward_with_dev(rot: float, x_dev: float, z_dev: float,
 
 def get_random_upward(x_dev: float = 0., z_dev: float = 0.):
     random_angle = torch.randint(high=90, size=(1,)).float()
-    return get_upward_with_dev(float(random_angle), x_dev, z_dev), random_angle
+    return get_upward_with_dev(z_dev, float(random_angle), x_dev), random_angle
     # return  get_upward_with_dev(0., x_dev, z_dev), 0.
 
 def rand_rot_mtx():

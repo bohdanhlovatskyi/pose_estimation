@@ -16,18 +16,17 @@ from typing import Union
 
 @dataclass
 class Config:
-    max_depth: float = 10.
     img_width: int = 640
     img_height: int = 640
-    focal_length: int = 3 * (img_width * 0.5) / np.tan(60.0 * np.pi / 180.0);
+    focal_length: int = (img_width * 0.5) / np.tan(60.0 * np.pi / 180.0);
     min_depth: float = 1.
-    max_depth: float = 1.1
+    max_depth: float = 10.
     inliers_ratio: float = 1.
     outlier_dist: float = 30.
     
     # [TODO][IMPORTNAT]: not properly tested, be aware of using for
     # some experiments
-    pixel_noise: float = 2.
+    pixel_noise: float = 0.
 
 conf = Config()
 
@@ -134,7 +133,7 @@ def generate_examples(num_of_examples: int,
     return xs, Xs, inliers, R, t, rand_angle
 
 def compute_metric(Rgt, tgt, R, t):
-    rot_error = np.arccos((np.trace(np.matmul(Rgt, R)) - 1.0) / 2.0) * 180.0 / np.pi
+    rot_error = np.arccos((np.trace(Rgt.T @ R) - 1.0) / 2.0) * 180.0 / np.pi
     if np.isnan(rot_error):
         return 1000000.0, 180.0
     else:
@@ -195,8 +194,8 @@ if __name__ == "__main__":
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    for sim_idx in tqdm(range(0, 5)):
-        xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(100, (0, 40), sim_idx, conf)
+    for sim_idx in tqdm([-45, -30, -15, -5, 0, 5, 15, 30, 45]):
+        xs, Xs, _, Rgt, tgt, rand_angle = generate_examples(100, (0, 2), sim_idx, conf)
         Rgt, tgt = Rgt.numpy(), tgt.numpy()
 
         if PRINT: print(CRED, Rotation.from_matrix(Rgt).as_euler("XYZ", degrees=True), tgt, CEND)
@@ -222,7 +221,7 @@ if __name__ == "__main__":
         random.seed(seed)
         np.random.seed(seed)
         torch.manual_seed(seed)
-        R, t = p2p_solv_pipe(xs, Xs, camera_dict) 
+        R, t = p2p_solv_pipe(xs.copy(), Xs.copy(), camera_dict) 
         pose_error_np, orient_error_np = compute_metric(Rgt, tgt, R, t)
         if PRINT: print(CYELLOW, "np[pe, oe]: ", pose_error_np, orient_error_np, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
         if PRINT: print(R)
@@ -232,7 +231,7 @@ if __name__ == "__main__":
         random.seed(seed)            
         np.random.seed(seed)
         torch.manual_seed(seed)
-        R, t = ref(xs, Xs, camera_dict)
+        R, t = ref(xs.copy(), Xs.copy(), camera_dict)
         pose_error_p, orient_error_p = compute_metric(Rgt, tgt, R, t)
         if PRINT: print(CYELLOW, "p[pe, oe]: ", pose_error_p, orient_error_p, Rotation.from_matrix(R).as_euler("XYZ", degrees=True), t, CEND)
         orientation_errors_p.append(orient_error_p)

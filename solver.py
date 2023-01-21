@@ -52,6 +52,9 @@ class Up2P(Solver):
         self.min_sample_size: int = 2
         # TODO: add angles to potentially optimize for
         # or use them in a solver itself so not to prerotate the scene
+        self.fixer = np.eye(3)
+        self.fixer[0, 0] = -1
+        self.fixer[2, 2] = -1
     
     def get_sample_size(self) -> int:
         return self.min_sample_size
@@ -59,23 +62,24 @@ class Up2P(Solver):
     # x: [2,3]
     # X: [2,3]
     def __call__(self, x, X):
-        res = []
-        cps = poselib.up2p(x, X)
-        if cps is None: return res
+        # res = []
+        # cps = poselib.up2p(x, X)
+        # if cps is None: return res
 
-        for cp in cps:
-            if np.isnan(np.min(cp.q)) or np.isnan(np.min(cp.t)):
-                continue
-                
-            R = Rotation.from_quat(Solver.pl_to_scipy(cp.q)).as_matrix()
-            fixer = np.eye(3)
-            fixer[0, 0] = -1
-            fixer[2, 2] = -1
-            R = R @ fixer
-            t = -R @ cp.t
-            res.append((torch.tensor(R), torch.tensor(t)))
+        # for cp in cps:
+        #     if np.isnan(np.min(cp.q)) or np.isnan(np.min(cp.t)):
+        #         continue
 
-        return res
+        #     q = cp.q / np.linalg.norm(cp.q)    
+        #     R = Rotation.from_quat(Solver.pl_to_scipy(q)).as_matrix()
+        #     fixer = np.eye(3)
+        #     fixer[0, 0] = -1
+        #     fixer[2, 2] = -1
+        #     R = R @ fixer
+        #     t = -R @ cp.t
+        #     res.append((torch.tensor(R), torch.tensor(t)))
+
+        # return res
 
         assert x.shape == (self.min_sample_size, 3)
         assert X.shape == (self.min_sample_size, 3)
@@ -121,6 +125,9 @@ class Up2P(Solver):
             R[2, 0] = -sq
             R[0, 2] = sq
             R[2, 2] = cq
+
+            if cq < 0:
+                R = R @ self.fixer
 
             t = b[:3, 0] * q + b[:3, 1]
             t *= -inv_norm

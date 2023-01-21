@@ -138,14 +138,16 @@ class PrerotModel:
 class SolverPipeline(SP):
 
     def __init__(self,
-     num_models_to_eval: int = 500,
+     num_models_to_eval: int = 5000,
+     test_on_num_points: int = 1,
      verbose: bool = False,
-     up2p: bool = False
+     up2p: bool = True
     ) -> None:
         self.solver = Up2P() if up2p else P3PWrapper()
         self.sampler = Sampler()
         self.camera: Camera = None
         self.num_models_to_eval = num_models_to_eval
+        self.test_on_num_points = test_on_num_points
         self.verbose = verbose
     
     def __call__(self, pts2D, pts3D, camera_dict):
@@ -155,7 +157,7 @@ class SolverPipeline(SP):
         iterator = range(self.num_models_to_eval)        
         for i in (tqdm(iterator) if self.verbose else iterator):
             min_sample_size = self.solver.get_sample_size()
-            pts2d, idcs = self.sampler(pts2D, min_sample_size + 10)
+            pts2d, idcs = self.sampler(pts2D, min_sample_size + self.test_on_num_points)
             pts3d = pts3D[idcs]
 
             try:
@@ -176,7 +178,8 @@ class SolverPipeline(SP):
                 if cerr < sol_err:
                     sol_err = cerr
                     solution = (R, t)
-                    # print("[no-prerot csonvergence]: ", translated[min_sample_size], pts2d[min_sample_size])
+                    # print("[no-prerot convergence]: ", translated[min_sample_size], pts2d[min_sample_size])
+                    # print("cerr: ", cerr)
 
         return solution
 
@@ -191,13 +194,11 @@ class PrerotationScene:
 class DisplacementRefinerSolver(Solver):
     
     def __init__(self,
-     min_sample_size: int = 3,
-     outer_models_to_evaluate: int = 100,
-     inner_models_to_evaluate: int = max(1, 5),
+     outer_models_to_evaluate: int = 500,
+     inner_models_to_evaluate: int = max(1, 10),
      rotations_to_est: int = 1,
      verbose: bool = False
-     ) -> None:  
-        self.min_sample_size = min_sample_size
+     ) -> None: 
         self.outer_models_to_evaluate = outer_models_to_evaluate
         self.inner_models_to_evaluate = inner_models_to_evaluate
         self.rotations_to_est = rotations_to_est
@@ -351,7 +352,7 @@ class DisplacementRefinerSolver(Solver):
         err, Rf, tf = None, None, None
 
         for i in range(self.outer_models_to_evaluate):
-            pts2d, idcs = self.sampler(x, min_sample_size + 10)
+            pts2d, idcs = self.sampler(x, min_sample_size + 1)
             pts3d = X[idcs]
             
             # run the solver with default gravity direction so to get an estimate on prerotation
@@ -367,14 +368,14 @@ class DisplacementRefinerSolver(Solver):
                 R, t = R.detach().cpu().numpy(), t.detach().cpu().numpy()
 
                 # prerotate_with = self.get_prerotation_given_guess(R, t, X, x)
-                # prerotate_with = self.get_prerotation_ls(R, t, X, x)
+                prerotate_with = self.get_prerotation_ls(R, t, X, x)
                 
                 # scene = PrerotationScene(R, t, X, x, self.camera)
                 # with open(f"prerot2/res_{i}.pkl", "wb") as handle:
                 #     pickle.dump(scene, handle)
                 # prerotate_with = self.get_prerotation_ls_ransac(R, t, X, x)
                 
-                prerotate_with = self.get_prerotation_dummy(R, t, X, x)
+                # prerotate_with = self.get_prerotation_dummy(R, t, X, x)
                 # print('\033[44m', "prerotate_with: ", Rotation.from_matrix(prerotate_with).as_euler("XYZ", degrees=True), '\033[0m')
 
                 # prerotate, solve, rotate back
@@ -385,14 +386,11 @@ class DisplacementRefinerSolver(Solver):
                 if IR is None or It is None:
                     continue
 
-                # R = prerotate_with @ IR @ prerotate_with.T
-                # t = prerotate_with @ It 
-
                 R = IR @ prerotate_with
                 t = It @ prerotate_with
 
-                rp = R @ pts3d.T + t[:, None]
-                rp = self.camera.cam2pix(rp.T)
+                rp = (R @ pts3d.T + t[:, None]).T
+                rp = self.camera.cam2pix(rp)
                 cerr = np.linalg.norm(rp - pts2d)
                 if err is None or cerr < err:
                     # print("[prerot convergence]: ", rp, pts2d)
